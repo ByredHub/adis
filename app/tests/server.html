@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Adis server-mode e2e</title>
+<style>body{font:14px system-ui;margin:16px}iframe{width:400px;height:820px;border:1px solid #ccc}pre{white-space:pre-wrap}</style></head>
+<body>
+<h1>Adis server-mode e2e</h1>
+<p>Open from the backend origin (server\run.ps1): http://localhost:8000/tests/server.html</p>
+<pre id="out">running…</pre>
+<iframe id="f" src="../index.html#/welcome"></iframe>
+<script>
+(async () => {
+  const out = document.getElementById('out');
+  const lines = []; let fails = 0;
+  const log = (ok, msg) => { lines.push((ok ? 'PASS ' : 'FAIL ') + msg); if (!ok) fails++; out.textContent = lines.join('\n'); };
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const f = document.getElementById('f');
+  const errors = [];
+  const watch = () => {
+    f.contentWindow.addEventListener('error', e => errors.push(e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno));
+    f.contentWindow.addEventListener('unhandledrejection', e => errors.push('rejection: ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)));
+  };
+  try {
+    await new Promise(r => f.onload = r);
+    const W0 = f.contentWindow;
+    W0.localStorage.clear(); W0.sessionStorage.clear();
+    W0.localStorage.setItem('adis.settings', JSON.stringify({ onboarded: true }));  // no API settings: the app must auto-connect
+    W0.location.reload();
+    await new Promise(r => f.onload = r);
+    watch();
+    await sleep(1200);
+    const A = () => f.contentWindow.Adis;
+    const doc = () => f.contentWindow.document;
+    const repo = A().repo;
+
+    const health = await fetch(location.origin + '/v1/health').then(r => r.json());
+    log(health.status === 'ok', 'health: ' + JSON.stringify(health));
+    log(A().api.isDemo() === false && A().settings.get('apiBaseUrl') === location.origin + '/v1', 'app auto-connected to the server it was opened from');
+
+    const email = 'e2e' + Date.now() + '@example.com';
+    const user = await repo.auth.register('Ева Тестова', email, 'password123');
+    log(user && user.email === email, 'register via API');
+    const tok = JSON.parse(f.contentWindow.localStorage.getItem('adis.sec.tokens') || f.contentWindow.sessionStorage.getItem('adis.sec.tokens') || '{}');
+    log(/^at_/.test(tok.accessToken || ''), 'real server token stored');
+
+    /* TZ scenario through the same repositories the screens use */
+    let done = null, statuses = 0, deltas = 0;
+    for await (const evt of repo.chat.stream({ content: 'Сегодня познакомился с Артёмом. Он программист, работает с Python и занимается разработкой сайтов', clientMessageId: 'e2e-1' })) {
+      if (evt.type === 'status') statuses++;
+      if (evt.type === 'delta') deltas++;
+      if (evt.type === 'done') done = evt;
+    }
+    log(done && deltas > 3 && statuses > 0, `SSE stream: ${statuses} status, ${deltas} delta`);
+    const card = done.message.cards[0];
+    log(card.type === 'memory_save' && card.data.person.name === 'Артём', 'memory card for Артём');
+    const res = await repo.actions.confirmMemoryCard(card.data, { kind: 'chat', conversationId: done.conversation.id });
+    await repo.chat.setCard(done.conversation.id, done.message.id, card.id, { status: 'confirmed', result: res });
+    const people = await repo.people.list(true);
+    log(people.length === 1 && people[0].skills.includes('Python'), 'person saved on server');
+
+    const q = await repo.chat.send({ content: 'С кем я недавно познакомился из программистов?' });
+    log(/Артём/.test(q.assistantMessage.content) && q.assistantMessage.engine === 'rules', 'people query finds Артём');
+    const rem = await repo.chat.send({ content: 'Напомни завтра в 10 позвонить Артёму' });
+    const tc = rem.assistantMessage.cards[0];
+    const due = new Date(tc.data.dueAt), tm = new Date(); tm.setDate(tm.getDate() + 1);
+    log(tc.type === 'task_create' && due.getHours() === 10 && due.getDate() === tm.getDate() && tc.data.personId === people[0].id, 'reminder card: ' + due);
+    await repo.actions.confirmTaskCard(tc.data, { kind: 'chat' });
+    const tasks = await repo.tasks.list(true);
+    log(tasks.length === 1 && tasks[0].status === 'active' && tasks[0].personId === people[0].id, 'task created and linked');
+
+    /* Calendar from chat */
+    const ev = await repo.chat.send({ content: 'Встреча с Артёмом завтра с 15 до 16 в офисе' });
+    const ec = ev.assistantMessage.cards[0];
+    log(ec.type === 'event_create' && new Date(ec.data.startAt).getHours() === 15 && ec.data.personId === people[0].id && ec.data.location === 'В офисе', 'event card: ' + JSON.stringify(ec.data));
+    const er = await repo.actions.confirmEventCard(ec.data);
+    const mv = await repo.chat.send({ content: 'Перенеси встречу с Артёмом на 17:30' });
+    const mc = mv.assistantMessage.cards[0];
+    log(mc.type === 'event_update' && mc.data.eventId === er.eventId && new Date(mc.data.startAt).getHours() === 17, 'move card');
+    await repo.actions.confirmEventUpdateCard(mc.data);
+    const evs = await repo.events.list(true);
+    log(evs.length === 1 && new Date(evs[0].startAt).getMinutes() === 30 && new Date(evs[0].endAt) - new Date(evs[0].startAt) === 3600000, 'event moved, duration kept');
+    const cq = await repo.chat.send({ content: 'Что у меня завтра?' });
+    log(/Встреча с Артёмом/.test(cq.assistantMessage.content), 'calendar query');
+
+    /* Alarm from chat */
+    const al = await repo.chat.send({ content: 'Поставь будильник на 7:30 по будням' });
+    const ac = al.assistantMessage.cards[0];
+    log(ac.type === 'alarm_set' && ac.data.hour === 7 && ac.data.days.join() === '1,2,3,4,5', 'alarm card');
+    await repo.actions.confirmAlarmCard(ac.data);
+    const alarms = await repo.alarms.list(true);
+    log(alarms.length === 1 && new Date(alarms[0].nextAt).getHours() === 7 && alarms[0].daysLabel === 'По будням', 'alarm saved: next ' + alarms[0].nextAt);
+    A().router.go('#/tasks'); await sleep(1400);
+    log(!!doc().querySelector(`[data-alarms] [data-alarm="${alarms[0].id}"]`) && /07:30/.test(doc().querySelector('[data-alarms]').innerText), 'alarm visible on Tasks screen (server)');
+
+    /* Calendar subscription feed */
+    const feed = await repo.calendar.enableFeed();
+    const icsText = await fetch(feed.url).then(r => r.text());
+    log(/BEGIN:VCALENDAR/.test(icsText) && /SUMMARY:Встреча с Артёмом/.test(icsText) && feed.webcal.startsWith('webcal://'), 'iCal feed');
+    const imp = await repo.calendar.importIcs('BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:e2e-1\r\nDTSTART:20300101T100000Z\r\nSUMMARY:Импорт\r\nEND:VEVENT\r\nEND:VCALENDAR');
+    log(imp.created === 1, 'ics import');
+    const pst = await A().push.status();
+    log(['on', 'off', 'unsupported', 'denied', 'install'].includes(pst.state), 'push status: ' + pst.state + ' — ' + pst.text);
+
+    /* Finance */
+    const fe = await repo.chat.send({ content: 'Потратил 1200 на продукты' });
+    log(fe.assistantMessage.cards[0].type === 'finance_tx' && fe.assistantMessage.cards[0].data.amount === 1200, 'expense card');
+    await repo.actions.confirmFinanceCard(fe.assistantMessage.cards[0].data);
+    const fd = await repo.chat.send({ content: 'Дал Артёму 5000 до 25 декабря' });
+    const fdc = fd.assistantMessage.cards[0];
+    log(fdc.type === 'debt_create' && fdc.data.personId === people[0].id, 'debt card linked to Артём');
+    await repo.actions.confirmDebtCard(fdc.data);
+    const fr = await repo.chat.send({ content: 'Артём вернул 2000' });
+    const frr = await repo.actions.confirmDebtRepayCard(fr.assistantMessage.cards[0].data);
+    log(frr.left === 3000, 'repayment on server');
+    const fs = await repo.finance.summary();
+    log(fs.totals[0].expense === 1200 && fs.debts[0].owedToMe === 3000, 'finance summary');
+
+        let dupErr = null;
+    try { await A().api.request('POST /chat/messages', { body: { conversationId: done.conversation.id, content: 'x', clientMessageId: 'e2e-1' } }); } catch (e) { dupErr = e; }
+    log(dupErr && dupErr.code === 'conflict', 'duplicate message -> conflict');
+
+    /* Screens render against the server */
+    const screens = ['#/home', '#/chat/' + done.conversation.id, '#/memory', '#/people', '#/person/' + people[0].id, '#/tasks', '#/calendar', '#/alarms', '#/finance', '#/finance?tab=debts', '#/proactive', '#/agents', '#/profile'];
+    for (const s of screens) {
+      A().router.go(s); await sleep(1400);
+      const txt = doc().body.innerText;
+      log(txt.length > 40 && !/Что-то пошло не так|Ошибка на сервере/.test(txt), 'screen ' + s);
+    }
+    A().router.go('#/chat/' + done.conversation.id); await sleep(1400);
+    log(/без LLM/.test(doc().body.innerText), 'chat shows "без LLM" label');
+
+    /* Wrong password message */
+    await repo.auth.logout();
+    let loginErr = null;
+    try { await repo.auth.login(email, 'wrong-password'); } catch (e) { loginErr = e; }
+    log(loginErr && loginErr.userMessage === 'Неверный email или пароль', 'wrong password message: ' + (loginErr && loginErr.userMessage));
+    await repo.auth.login(email, 'password123');
+    log(!!repo.auth.user, 'login again');
+
+    /* Demo account on server */
+    await repo.auth.logout();
+    await repo.auth.login('demo@adis.app', 'adis-demo-2026', { demo: true });
+    const dp = await repo.people.list(true);
+    const sug = await repo.proactive.list();
+    log(dp.length === 3 && sug.length > 0, `demo account: ${dp.length} people, ${sug.length} suggestions`);
+    A().router.go('#/home'); await sleep(1500);
+    log(!!doc().querySelector('.home-brand') && !doc().querySelector('.home-demo'), 'home rendered without local demo badge');
+  } catch (e) {
+    log(false, 'exception: ' + (e && (e.stack || e.message) || e));
+  }
+  log(errors.length === 0, 'no JS errors' + (errors.length ? ': ' + errors.join(' | ') : ''));
+  lines.push(fails ? `RESULT: ${fails} FAILED` : 'RESULT: ALL PASSED');
+  out.textContent = lines.join('\n');
+})();
+</script>
+</body></html>

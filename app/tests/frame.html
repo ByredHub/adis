@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#fff}iframe{width:390px;height:844px;border:0;display:block}</style></head><body>
+<iframe id="f"></iframe>
+<script>
+const PRESETS = { intro: '#/chat/new?q=' + encodeURIComponent('Сегодня познакомился с Артёмом. Он программист, работает с Python и занимается разработкой сайтов') };
+let q = decodeURIComponent(location.search.slice(1) || '#/home');
+const s = JSON.parse(localStorage.getItem('adis.settings') || '{}');
+s.theme = /\|dark$/.test(q) ? 'dark' : 'light'; q = q.replace(/\|dark$/, '');
+localStorage.setItem('adis.settings', JSON.stringify(s));
+document.getElementById('f').src = '../index.html' + (PRESETS[q] || q);
+</script>
+</body></html>

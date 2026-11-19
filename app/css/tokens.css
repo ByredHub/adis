@@ -1,0 +1,122 @@
+/* Adis Design System — tokens */
+:root {
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", Inter, Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, "Roboto Mono", monospace;
+  --font-scale: 1;
+
+  --bg: #F7F6FB;
+  --surface: #FFFFFF;
+  --surface-2: #F3F1FA;
+  --surface-3: #E9E5F6;
+  --text: #16141F;
+  --text-2: #5C5870;
+  --text-3: #8F8AA4;
+  --border: #E9E6F1;
+  --border-strong: #D8D3E8;
+
+  --primary: #7457F5;
+  --primary-strong: #5B3DE8;
+  --primary-soft: #EFEBFF;
+  --primary-softer: #F7F5FF;
+  --on-primary: #FFFFFF;
+  --accent: #C26CFF;
+  --accent-2: #5EC2FF;
+
+  --success: #18946A;
+  --success-soft: #E2F5EC;
+  --warning: #B86E00;
+  --warning-soft: #FFF2D9;
+  --danger: #D3364A;
+  --danger-soft: #FDE8EB;
+  --info: #2F6FED;
+  --info-soft: #E6EEFF;
+
+  --orb: radial-gradient(circle at 30% 28%, #FFFFFF 0%, #E6DCFF 14%, #A88BFF 38%, #7457F5 62%, #4A2BD1 100%);
+  --brand-grad: linear-gradient(135deg, #8A6BFF 0%, #6A4BF2 55%, #B463FF 100%);
+
+  --shadow-1: 0 1px 2px rgba(25, 18, 60, .04), 0 2px 8px rgba(25, 18, 60, .04);
+  --shadow-2: 0 6px 22px rgba(60, 38, 160, .08), 0 1px 3px rgba(25, 18, 60, .05);
+  --shadow-3: 0 24px 64px rgba(50, 30, 140, .20);
+  --ring: 0 0 0 3px rgba(116, 87, 245, .28);
+
+  --r-xs: 8px;
+  --r-sm: 12px;
+  --r-md: 16px;
+  --r-lg: 22px;
+  --r-xl: 28px;
+  --r-full: 999px;
+
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+
+  --tap: 48px;
+  --appbar-h: 56px;
+  --tabbar-h: 64px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --dur-1: 120ms;
+  --dur-2: 220ms;
+  --dur-3: 360ms;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #0E0D14;
+  --surface: #17151F;
+  --surface-2: #1F1C29;
+  --surface-3: #2A2636;
+  --text: #F3F1FA;
+  --text-2: #B4AFC7;
+  --text-3: #7F7A93;
+  --border: #29263A;
+  --border-strong: #3A3550;
+
+  --primary: #9781FF;
+  --primary-strong: #A895FF;
+  --primary-soft: #2A2350;
+  --primary-softer: #1E1A36;
+  --on-primary: #FFFFFF;
+
+  --success: #4CCB98;
+  --success-soft: #16352A;
+  --warning: #F0B24A;
+  --warning-soft: #3A2C12;
+  --danger: #FF6B7D;
+  --danger-soft: #3D1820;
+  --info: #7EA6FF;
+  --info-soft: #1B2747;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow-2: 0 6px 22px rgba(0, 0, 0, .35);
+  --shadow-3: 0 24px 64px rgba(0, 0, 0, .55);
+
+  color-scheme: dark;
+}
+
+[data-contrast="high"] {
+  --text-2: #3A3650;
+  --text-3: #5C5870;
+  --border: #BDB6D6;
+  --primary: #4B2BD6;
+}
+[data-theme="dark"][data-contrast="high"] {
+  --text-2: #E0DCF0;
+  --text-3: #C2BDD6;
+  --border: #5A5474;
+  --primary: #B7A8FF;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-1: 0ms; --dur-2: 0ms; --dur-3: 0ms; }
+}

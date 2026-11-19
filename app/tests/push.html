@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Adis real push e2e</title></head>
+<body>
+<p>Real Web Push round trip: subscribe in this browser → server sends through the browser's push service → service worker shows the notification.
+Run with tools\page-test.ps1 -GrantNotifications (needs internet).</p>
+<pre id="out">running…</pre>
+<iframe id="f" src="../index.html#/welcome" style="width:400px;height:600px"></iframe>
+<script>
+(async () => {
+  const out = document.getElementById('out'), lines = []; let fails = 0;
+  const log = (ok, msg) => { lines.push((ok ? 'PASS ' : 'FAIL ') + msg); if (!ok) fails++; out.textContent = lines.join('\n'); };
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const f = document.getElementById('f');
+  try {
+    await new Promise(r => f.onload = r);
+    f.contentWindow.localStorage.clear();
+    f.contentWindow.localStorage.setItem('adis.settings', JSON.stringify({ apiMode: 'server', apiBaseUrl: location.origin + '/v1', onboarded: true }));
+    f.contentWindow.location.reload();
+    await new Promise(r => f.onload = r); await sleep(1500);
+    const A = f.contentWindow.Adis;
+    await A.repo.auth.register('Push Тест', 'push' + Date.now() + '@example.com', 'password123');
+    const reg = await f.contentWindow.navigator.serviceWorker.ready;
+    log(!!reg.active, 'service worker active');
+    log(Notification.permission === 'granted', 'notification permission: ' + Notification.permission);
+    await A.push.enable();
+    const st = await A.push.status();
+    log(st.state === 'on', 'subscribed: ' + st.text);
+    const r = await A.push.test();
+    log(r.delivered === 1, 'server delivered to push service: ' + JSON.stringify(r));
+    let shown = [];
+    for (let i = 0; i < 30 && !shown.length; i++) { await sleep(1000); shown = await reg.getNotifications({ tag: 'test' }); }
+    log(shown.length === 1 && shown[0].body === 'Уведомления работают', 'service worker showed: ' + (shown[0] ? shown[0].title + ' / ' + shown[0].body : 'nothing'));
+    await A.push.disable();
+    log((await A.push.status()).state === 'off', 'unsubscribed');
+  } catch (e) { log(false, 'exception: ' + (e && (e.stack || e.message) || e)); }
+  lines.push(fails ? `RESULT: ${fails} FAILED` : 'RESULT: ALL PASSED');
+  out.textContent = lines.join('\n');
+})();
+</script>
+</body></html>

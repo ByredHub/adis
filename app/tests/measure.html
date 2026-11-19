@@ -1,0 +1,18 @@
+<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">
+<pre id="o"></pre>
+<iframe id="f" style="width:390px;height:844px;border:0" src="../index.html#/home"></iframe>
+<script>
+const errs = [];
+const f = document.getElementById('f');
+f.addEventListener('load', () => {
+  f.contentWindow.addEventListener('error', e => errs.push(e.message + ' ' + e.lineno));
+  f.contentWindow.addEventListener('unhandledrejection', e => errs.push('rej ' + (e.reason && e.reason.stack)));
+});
+setTimeout(() => {
+  const d = f.contentWindow.document;
+  const q = s => { const n = d.querySelector(s); return n ? n.outerHTML.slice(0, 600) : 'NONE'; };
+  const hint = d.querySelector('.hint');
+  const anim = hint ? hint.getAnimations().map(a => a.playState + '@' + Math.round(a.currentTime)) : [];
+  document.getElementById('o').textContent = ['opacity: ' + (hint && f.contentWindow.getComputedStyle(hint).opacity) + ' anims ' + anim.join(','),'hints: ' + q('[data-hints]'), 'note: ' + q('[data-note]'), 'errors: ' + errs.join(' | '), 'logs: ' + JSON.stringify(f.contentWindow.Adis.log.entries())].join('\n');
+}, 5000);
+</script></body></html>

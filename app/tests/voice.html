@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Adis cloud voice e2e</title></head>
+<body>
+<p>Cloud voice round trip with a fake microphone. Run with tools\page-test.ps1 and Edge flags
+--use-fake-ui-for-media-stream --use-fake-device-for-media-stream --use-file-for-fake-audio-capture=&lt;wav&gt; --autoplay-policy=no-user-gesture-required</p>
+<pre id="out">running…</pre>
+<iframe id="f" src="../index.html#/welcome" style="width:400px;height:800px" allow="microphone; autoplay"></iframe>
+<script>
+(async () => {
+  const out = document.getElementById('out'), lines = []; let fails = 0;
+  const log = (ok, msg) => { lines.push((ok ? 'PASS ' : 'FAIL ') + msg); if (!ok) fails++; out.textContent = lines.join('\n'); };
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const f = document.getElementById('f');
+  try {
+    await new Promise(r => f.onload = r);
+    f.contentWindow.localStorage.clear();
+    f.contentWindow.localStorage.setItem('adis.settings', JSON.stringify({ onboarded: true }));
+    f.contentWindow.location.reload();
+    await new Promise(r => f.onload = r); await sleep(1500);
+    const A = f.contentWindow.Adis;
+    await A.repo.auth.register('Ева', 'voice' + Date.now() + '@example.com', 'password123');
+    await A.repo.people.create({ name: 'Артём' });
+    await A.voice.refreshCloud();
+    log(A.voice.cloud.stt && A.voice.cloud.tts, 'cloud voice available: ' + JSON.stringify(A.voice.cloud));
+
+    /* 1. Service level: record → transcribe */
+    const t0 = Date.now(); let levels = 0, stage = '';
+    const text = await new Promise(resolve => {
+      const ctl = A.voice.listen({ onLevel: l => { if (l > 0.09) levels++; }, onStage: s => { stage = s; }, onFinal: resolve, onError: c => resolve('ERROR ' + c), onEnd: () => {} });
+      setTimeout(() => ctl.stop(), 20000);
+    });
+    log(/Артём/.test(text) && /\+?7\s?999/.test(text.replace(/[()-]/g, ' ')), `transcribed in ${Date.now() - t0} ms: «${text}»`);
+    log(levels > 10 && stage === 'transcribing', `mic levels seen: ${levels}, stage: ${stage}`);
+
+    /* 2. Voice screen: tap mic → recognition → AI reply → spoken answer */
+    f.contentWindow.location.hash = '#/voice'; await sleep(1500);
+    const doc = f.contentWindow.document;
+    log(/облачный голос/.test(doc.querySelector('[data-mode]').textContent), 'voice screen uses cloud: ' + doc.querySelector('[data-mode]').textContent);
+    doc.querySelector('[data-mic]').click();
+    let spoke = false;
+    for (let i = 0; i < 80; i++) { await sleep(500); if (A.voice.speaking) { spoke = true; break; } }
+    const you = doc.querySelector('[data-you]').textContent, ai = doc.querySelector('[data-ai]').textContent;
+    log(/Артём/.test(you) && ai.length > 10, `voice turn: «${you}» → «${ai.slice(0, 100)}»`);
+    log(spoke, 'answer is being spoken (cloud TTS audio playing)');
+    A.voice.stopSpeaking();
+  } catch (e) { log(false, 'exception: ' + (e && (e.stack || e.message) || e)); }
+  lines.push(fails ? `RESULT: ${fails} FAILED` : 'RESULT: ALL PASSED');
+  out.textContent = lines.join('\n');
+})();
+</script>
+</body></html>

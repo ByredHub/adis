@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Adis smoke tests</title>
+<style>body{font:14px system-ui;margin:16px}iframe{width:400px;height:820px;border:1px solid #ccc}.ok{color:green}.fail{color:#c00;font-weight:bold}pre{white-space:pre-wrap}</style></head>
+<body>
+<h1>Adis smoke tests</h1>
+<pre id="out">running…</pre>
+<iframe id="f" src="../index.html#/welcome"></iframe>
+<script>
+(async () => {
+  const out = document.getElementById('out');
+  const lines = []; let fails = 0;
+  const log = (ok, msg) => { lines.push((ok ? 'PASS ' : 'FAIL ') + msg); if (!ok) fails++; out.textContent = lines.join('\n'); };
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const f = document.getElementById('f');
+  await new Promise(r => f.onload = r);
+  const W = f.contentWindow;
+  const errors = [];
+  W.addEventListener('error', e => errors.push(e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno));
+  W.addEventListener('unhandledrejection', e => errors.push('rejection: ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)));
+  W.localStorage.clear(); W.sessionStorage.clear();
+  W.localStorage.setItem('adis.settings', JSON.stringify({ apiModeChosen: true }));  // stay in demo even when served by the backend
+  W.location.reload();
+  await new Promise(r => f.onload = r);
+  const A = () => f.contentWindow.Adis;
+  f.contentWindow.addEventListener('error', e => errors.push(e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno));
+  f.contentWindow.addEventListener('unhandledrejection', e => errors.push('rejection: ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)));
+  await sleep(1500);
+  const doc = () => f.contentWindow.document;
+  log(!!doc().querySelector('.welcome'), 'welcome screen rendered');
+
+  /* ---- NLU unit checks ---- */
+  const N = A().nlu;
+  const p = N.extractPerson('Сегодня познакомился с Артёмом. Он программист, работает с Python и занимается разработкой сайтов');
+  log(p && p.name === 'Артём', 'person name: ' + (p && p.name));
+  log(p && p.profession === 'Программист', 'profession: ' + (p && p.profession));
+  log(p && p.skills.includes('Python') && p.skills.includes('разработка сайтов'), 'skills: ' + (p && p.skills.join(', ')));
+  const p2 = N.extractPerson('Вчера познакомилась с Анной Петровой на конференции AI Days, она дизайнер и работает в Яндексе');
+  log(p2 && p2.name === 'Анна Петрова' && p2.profession === 'Дизайнер' && p2.organization === 'Яндекс' && /конференции/.test(p2.metWhere), 'person2: ' + JSON.stringify(p2));
+  const r = N.extractReminder('Напомни завтра в 10 позвонить Артёму');
+  const due = new Date(r.dueAt), tm = new Date(); tm.setDate(tm.getDate() + 1);
+  log(r.title === 'Позвонить Артёму' && due.getHours() === 10 && due.getDate() === tm.getDate(), 'reminder: ' + r.title + ' @ ' + due.toString());
+  const r2 = N.extractReminder('напомни мне каждый день в 8 утра пить воду');
+  log(r2.repeat === 'daily' && new Date(r2.dueAt).getHours() === 8 && r2.title === 'Пить воду', 'reminder2: ' + JSON.stringify(r2));
+  const r3 = N.extractReminder('Напомни в пятницу в 7 вечера купить билеты');
+  log(new Date(r3.dueAt).getDay() === 5 && new Date(r3.dueAt).getHours() === 19 && r3.title === 'Купить билеты', 'reminder3: ' + JSON.stringify(r3));
+  const r4 = N.extractReminder('напомни через 15 минут выключить духовку');
+  log(Math.abs(new Date(r4.dueAt) - Date.now() - 15 * 60000) < 60000 && r4.title === 'Выключить духовку', 'reminder4: ' + JSON.stringify(r4));
+  log(N.intent('С кем я недавно познакомился из программистов?') === 'people_query', 'intent people_query');
+  log(N.intent('Напомни завтра в 10 позвонить Артёму') === 'reminder', 'intent reminder');
+  log(N.intent('Что у меня на сегодня?') === 'task_query', 'intent task_query');
+  log(N.intent('Запомни, мой пароль от почты 12345') === 'memory_save' && N.isSensitive('мой пароль от почты 12345'), 'sensitive detection');
+  log(A().util.sameStem('Артёму', 'Артём') && A().util.sameStem('Андрею', 'Андрей') && A().util.sameStem('Машей', 'Маша'), 'stem matching');
+
+  /* ---- Register new user and walk through onboarding ---- */
+  const repo = A().repo;
+  await repo.auth.register('Тест Тестов', 'test@adis.app', 'password123');
+  A().router.go('#/onboarding'); await sleep(500);
+  log(!!doc().querySelector('.ob-head'), 'onboarding rendered');
+  for (let i = 0; i < 5; i++) { doc().querySelector('[data-next]').click(); await sleep(250); }
+  await sleep(900);
+  log(A().settings.get('onboarded') === true && f.contentWindow.location.hash === '#/home', 'onboarding finished -> home');
+
+  /* ---- Chat scenario from TZ ---- */
+  const U2 = A().util;
+  const send = async (content, conversationId) => repo.chat.send({ content, conversationId, clientMessageId: A().util.uid('cm') });
+  let res = await send('Сегодня познакомился с Артёмом. Он программист, работает с Python и занимается разработкой сайтов');
+  const conv = res.conversation.id;
+  const card = res.assistantMessage.cards.find(c => c.type === 'memory_save');
+  log(card && card.status === 'pending' && card.data.person.name === 'Артём', 'intro -> memory card');
+  const saved = await repo.actions.confirmMemoryCard(card.data, { kind: 'chat', conversationId: conv, messageId: res.assistantMessage.id, excerpt: 'test' });
+  await repo.chat.setCard(conv, res.assistantMessage.id, card.id, { status: 'confirmed', result: saved });
+  const people = await repo.people.list(true);
+  log(people.some(x => x.name === 'Артём' && x.profession === 'Программист'), 'Артём saved in people');
+  res = await send('С кем я недавно познакомился из программистов?', conv);
+  log(/Артём/.test(res.assistantMessage.content) && res.assistantMessage.cards.some(c => c.type === 'people'), 'query finds Артём: ' + res.assistantMessage.content.slice(0, 120));
+  res = await send('Напомни завтра в 10 позвонить Артёму', conv);
+  const tc = res.assistantMessage.cards.find(c => c.type === 'task_create');
+  log(tc && tc.data.personName === 'Артём' && tc.data.title === 'Позвонить Артёму', 'reminder card linked to Артём');
+  await repo.actions.confirmTaskCard(tc.data, { kind: 'chat' });
+  const tasks = await repo.tasks.list(true);
+  log(tasks.some(t => t.title === 'Позвонить Артёму' && t.personId), 'task created and linked');
+  res = await send('Кто такой Артём?', conv);
+  log(/Python/.test(res.assistantMessage.content) && /Позвонить/.test(res.assistantMessage.content), 'entity lookup includes skills and tasks');
+  res = await send('Запомни, что я не пью кофе после 18:00', conv);
+  log(res.assistantMessage.cards[0] && res.assistantMessage.cards[0].type === 'memory_save', 'memory_save card');
+  res = await send('Запомни мой пароль от почты qwerty123', conv);
+  log(res.assistantMessage.cards[0].data.sensitive === true, 'sensitive flagged');
+  res = await send('Что у меня на завтра?', conv);
+  log(/Позвонить Артёму/.test(res.assistantMessage.content), 'task query lists reminder');
+  res = await send('Напиши функцию фибоначчи на Python', conv);
+  log(/```python/.test(res.assistantMessage.content), 'code answer');
+
+  /* calendar & alarms from chat (demo engine) */
+  const ex = N.extractEvent('Встреча с Марией завтра с 15 до 16:30 в офисе на Тверской');
+  log(ex.title === 'Встреча с Марией' && new Date(ex.startAt).getHours() === 15 && new Date(ex.endAt).getMinutes() === 30 && ex.location === 'В офисе на Тверской', 'extractEvent: ' + JSON.stringify(ex));
+  const xa = N.extractAlarm('будильник на 6 утра по понедельникам и средам — пробежка');
+  log(xa.hour === 6 && xa.days.join() === '1,3' && xa.label === 'Пробежка', 'extractAlarm: ' + JSON.stringify(xa));
+  log(N.intent('Что у меня в среду?') === 'calendar_query' && N.intent('Отмени созвон с командой') === 'event_cancel' && N.intent('Напомни про встречу завтра в 15') === 'reminder', 'calendar intents');
+  res = await send('Встреча с Артёмом завтра в 15 в кафе', conv);
+  const ecd = res.assistantMessage.cards[0];
+  log(ecd.type === 'event_create' && ecd.data.personName === 'Артём' && new Date(ecd.data.startAt).getHours() === 15, 'event card in demo');
+  const evr = await repo.actions.confirmEventCard(ecd.data);
+  res = await send('Перенеси встречу с Артёмом на послезавтра', conv);
+  const mvd = res.assistantMessage.cards[0];
+  log(mvd.type === 'event_update' && mvd.data.eventId === evr.eventId && new Date(mvd.data.startAt).getHours() === 15 && U2.isSameDay(mvd.data.startAt, U2.addDays(new Date(), 2)), 'move keeps time, changes day');
+  res = await send('Разбуди меня завтра в 6:45', conv);
+  const ald = res.assistantMessage.cards[0];
+  log(ald.type === 'alarm_set' && ald.data.hour === 6 && ald.data.minute === 45 && !ald.data.days.length, 'alarm card in demo');
+  const alr = await repo.actions.confirmAlarmCard(ald.data);
+  const al1 = (await repo.alarms.list(true)).find(a => a.id === alr.alarmId);
+  log(al1 && new Date(al1.nextAt).getHours() === 6 && al1.daysLabel === 'Один раз', 'alarm stored in demo');
+  res = await send('разбуди меня в 10', conv);
+  const ald10 = res.assistantMessage.cards[0];
+  log(ald10 && ald10.type === 'alarm_set' && ald10.data.hour === 10 && ald10.data.minute === 0, 'alarm "разбуди меня в 10": ' + JSON.stringify(ald10 && ald10.data));
+  const alr10 = await repo.actions.confirmAlarmCard(ald10.data);
+  A().router.go('#/tasks'); await sleep(900);
+  log(!!doc().querySelector(`[data-alarms] [data-alarm="${alr10.alarmId}"]`) && /10:00/.test(doc().querySelector('[data-alarms]').innerText), 'alarm visible on Tasks screen');
+  /* reminder for a time that already passed today: warning + "На завтра" */
+  if (new Date().getHours() * 60 + new Date().getMinutes() > 6) {
+    res = await send('Напомни сегодня в 0:05 полить цветы', conv);
+    const pc = res.assistantMessage.cards[0];
+    const box = doc().createElement('div'); doc().body.appendChild(box);
+    box.innerHTML = A().cards.renderList([pc], {});
+    A().cards.bind(box, res.assistantMessage, { onUpdate: () => { box.innerHTML = A().cards.renderList([pc], {}); } });
+    log(pc.type === 'task_create' && !!box.querySelector('[data-past]'), 'past-time warning on reminder card');
+    box.querySelector('[data-tomorrow]').click(); await sleep(400);
+    const tm2 = U2.addDays(new Date(), 1);
+    log(U2.isSameDay(pc.data.dueAt, tm2) && new Date(pc.data.dueAt).getHours() === 0 && !box.querySelector('[data-past]'), '"На завтра" moves reminder to tomorrow');
+    box.remove();
+  } else log(true, 'past-time card check skipped right after midnight');
+  A().alarmClock.ring(Object.assign({}, al1, { ringing: true }));
+  await sleep(300);
+  log(!!doc().querySelector('#alarm-ring [data-off]') && /06:45/.test(doc().querySelector('#alarm-ring').innerText), 'alarm rings full-screen');
+  doc().querySelector('#alarm-ring [data-snooze]').click(); await sleep(600);
+  const al2 = (await repo.alarms.list(true)).find(a => a.id === alr.alarmId);
+  log(!doc().querySelector('#alarm-ring') && al2.snoozeUntil && Math.abs(new Date(al2.nextAt) - Date.now() - 600000) < 30000, 'snooze 10 min');
+
+  /* finance (demo engine) */
+  const FM = A().mockFinance;
+  log(FM.parseMoney('Потратил 1 200 на продукты').amount === 1200 && FM.parseMoney('такси 2,5к').amount === 2500 && FM.parseMoney('$50 на подписку').currency === 'USD' && !FM.parseMoney('встреча в 15:30 до 25 декабря'), 'parseMoney');
+  log(FM.extractCounterparty('Занял у Дмитрия 10000') === 'Дмитрий' && FM.extractCounterparty('Дал Артёму 5000') === 'Артём' && FM.dative('Мама') === 'Маме', 'counterparty + dative');
+  res = await send('Потратил 1200 на продукты в Пятёрочке', conv);
+  const fx = res.assistantMessage.cards[0];
+  log(fx.type === 'finance_tx' && fx.data.amount === 1200 && fx.data.category === 'Продукты', 'expense card: ' + res.assistantMessage.content);
+  await repo.actions.confirmFinanceCard(fx.data);
+  res = await send('Дал Артёму 5000 до 25 декабря', conv);
+  const dx = res.assistantMessage.cards[0];
+  log(dx.type === 'debt_create' && dx.data.direction === 'lent' && dx.data.personId && dx.data.dueAt, 'debt card in demo');
+  await repo.actions.confirmDebtCard(dx.data);
+  res = await send('Артём вернул 2000', conv);
+  const rx = res.assistantMessage.cards[0];
+  log(rx.type === 'debt_repay' && rx.data.amount === 2000 && !rx.data.full, 'repay card in demo');
+  const rr = await repo.actions.confirmDebtRepayCard(rx.data);
+  log(rr.left === 3000 && !rr.closed, 'partial repayment');
+  res = await send('кто мне должен?', conv);
+  log(/Артём/.test(res.assistantMessage.content) && /3\u00a0000/.test(res.assistantMessage.content), 'who owes me');
+  res = await send('Сколько я потратил в этом месяце?', conv);
+  log(/1\u00a0200/.test(res.assistantMessage.content), 'spending query');
+  const fsum = await repo.finance.summary();
+  log(fsum.totals[0].expense === 1200 && fsum.debts[0].owedToMe === 3000, 'finance summary in demo');
+
+  /* photos */
+  const px = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/yQALCAABAAEBAREA/8wABgAQEAX/2gAIAQEAAD8A0s8g/9k=';
+  res = await repo.chat.send({ content: 'Это Артём', conversationId: conv, clientMessageId: A().util.uid('cm'), attachments: [{ name: 'p.jpg', size: 100, type: 'image/jpeg', width: 1, height: 1, image: px }] });
+  log(res.userMessage.attachments[0].image === px && res.assistantMessage.cards.some(c => c.type === 'person_photo' && c.data.personName === 'Артём') && res.assistantMessage.cards.some(c => c.type === 'memory_save' && c.data.memory.photo === px), 'photo → person_photo + memory card with photo');
+  const pm = res.assistantMessage.cards.find(c => c.type === 'memory_save');
+  const savedPhoto = await repo.actions.confirmMemoryCard(pm.data, { kind: 'chat' });
+  log((await repo.memory.list(true)).some(m => m.id === savedPhoto.memoryId && m.photo === px), 'photo saved in memory');
+  log(typeof A().camera.capture === 'function' && typeof A().ui.viewPhoto === 'function', 'camera module loaded');
+
+  /* streaming */
+  let deltas = 0, done = null;
+  for await (const e of repo.chat.stream({ content: 'Привет', conversationId: conv, clientMessageId: A().util.uid('cm') })) { if (e.type === 'delta') deltas++; if (e.type === 'done') done = e.message; }
+  log(deltas > 3 && done && done.content.length > 10, 'streaming works (' + deltas + ' deltas)');
+
+  /* ---- Render every screen ---- */
+  await repo.auth.logout();
+  await repo.auth.login('demo@adis.app', 'adis-demo-2026', { demo: true });
+  A().settings.set({ onboarded: true });
+  const routes = ['#/home', '#/chats', '#/chat/new', '#/chat/new?q=' + encodeURIComponent('Что ты умеешь?'), '#/voice', '#/memory', '#/memory?filter=unconfirmed', '#/people', '#/tasks', '#/tasks?tab=done', '#/calendar', '#/alarms', '#/finance', '#/finance?tab=debts', '#/finance?tab=ops', '#/proactive', '#/agents', '#/tools',
+    '#/workspace/code', '#/workspace/analytics', '#/workspace/docs', '#/workspace/reports', '#/workspace/files', '#/workspace/data', '#/profile',
+    ...['account', 'appearance', 'language', 'notifications', 'voice', 'memory', 'privacy', 'security', 'data', 'connection'].map(s => '#/settings/' + s)];
+  const mems = await repo.memory.list(true); const pp = await repo.people.list(true); const ags = await repo.agents.list();
+  routes.push('#/memory/' + mems[0].id, '#/person/' + pp[0].id, '#/agent/' + ags[0].id);
+  for (const r of routes) {
+    const before = errors.length;
+    f.contentWindow.location.hash = r; await sleep(r.includes('?q=') ? 4000 : 700);
+    const scr = doc().querySelector('.screen');
+    const title = (doc().querySelector('.appbar .title') || {}).textContent || '';
+    const bad = !scr || /^Ошибка/.test(title.trim()) || errors.length > before || doc().querySelector('.empty.error');
+    log(!bad, 'render ' + r + (bad ? ' :: ' + title.trim() + ' ' + errors.slice(before).join(' | ') : ''));
+  }
+  f.contentWindow.location.hash = '#/home'; await sleep(1500);
+  log(!!doc().querySelector('.talk textarea') && !!doc().querySelector('.talk-mic') && doc().querySelectorAll('.hint').length <= 2 && doc().querySelectorAll('.note').length <= 1 && !doc().querySelector('.quick'), 'home: composer, ≤2 hints, ≤1 note, no action grid');
+  doc().querySelector('.talk textarea').value = 'тест'; doc().querySelector('.talk textarea').dispatchEvent(new Event('input'));
+  log(!doc().querySelector('.talk-send').hidden && doc().querySelector('.talk-mic').hidden, 'home: mic swaps to send when typing');
+  log(!!doc().querySelector('.talk [data-camera]'), 'home: camera button in composer');
+  const camP = A().camera.capture({ title: 't' }); await sleep(1200);
+  const camEl = doc().querySelector('.cam');
+  log(!!camEl && !!camEl.querySelector('[data-shoot]'), 'camera overlay opens');
+  if (camEl) camEl.querySelector('[data-close]').click();
+  log((await camP) === null && !doc().querySelector('.cam:not(.closing)'), 'camera closes cleanly');
+  f.contentWindow.location.hash = '#/chat/new?q=' + encodeURIComponent('Что ты умеешь?'); await sleep(6000);
+  log(/Запоминать людей/.test(doc().querySelector('.messages').innerText), 'chat screen streams answer to UI');
+
+  /* interactive: voice studio starters & inline action cards */
+  A().settings.set({ voiceAutoplay: false });
+  f.contentWindow.location.hash = '#/voice'; await sleep(900);
+  log(doc().querySelectorAll('.v-starter-card').length === 4 && !!doc().querySelector('.voice-dock'), 'voice studio: starter cards + dock rendered');
+  doc().querySelector('[data-starter="1"]').click(); await sleep(4500);
+  const vCard = doc().querySelector('.voice-cards .acard.action[data-cid]');
+  log(!!vCard && /Позвонить Артёму/.test(vCard.innerText), 'voice studio: interactive reminder card rendered on screen');
+  if (vCard) { vCard.querySelector('[data-ok]').click(); await sleep(900); }
+  log(!!doc().querySelector('.voice-cards .acard.action.done'), 'voice studio: reminder confirmed right inside voice mode');
+  A().settings.set({ voiceAutoplay: true });
+
+  /* interactive: run agent */
+  f.contentWindow.location.hash = '#/agent/' + ags[0].id;
+  for (let i = 0; i < 20 && !doc().querySelector('[data-run]'); i++) await sleep(150);
+  doc().querySelector('[data-run]').click(); await sleep(4000);
+  log(/План на/.test(doc().querySelector('[data-live]').innerText), 'agent run result');
+
+  /* dark theme */
+  A().settings.set({ theme: 'dark' }); await sleep(200);
+  log(doc().documentElement.getAttribute('data-theme') === 'dark', 'dark theme applied');
+  A().settings.set({ theme: 'light' });
+
+  log(errors.length === 0, 'no JS errors: ' + errors.join(' | '));
+  lines.push('', fails ? `RESULT: ${fails} FAILED` : 'RESULT: ALL PASSED');
+  out.textContent = lines.join('\n');
+  document.title = fails ? 'FAILED' : 'PASSED';
+})().catch(e => { document.getElementById('out').textContent += '\nCRASH: ' + (e.stack || e); document.title = 'CRASH'; });
+</script>
+</body></html>
