@@ -1,0 +1,26 @@
+name: Adis
+options:
+  bundleIdPrefix: app.rainbow8311
+  deploymentTarget: "15.0"
+targets:
+  Adis:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Adis
+        excludes:
+          - "**/*.md"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.rainbow8311.peach5135
+        INFOPLIST_FILE: Adis/Info.plist
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: LWGNB3QJ4H
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+      configs:
+        Release:
+          CODE_SIGN_IDENTITY: iPhone Distribution
+          PROVISIONING_PROFILE_SPECIFIER: 931d2b40-a18c-4812-934e-22f115a48126
