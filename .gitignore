@@ -1,0 +1,26 @@
+# Whitelist: this repository publishes the Adis AI Backend only (server/, docs/, Docker, dev tools).
+# Everything else in the working folder (PWA app/, signing certificates, local notes) stays private.
+/*
+!/.gitignore
+!/README.md
+!/docker-compose.yml
+!/docs/
+!/server/
+!/tools/
+/tools/*
+!/tools/pg.ps1
+
+# Never commit secrets, keys or local data
+.env
+*.p12
+*.pem
+*.key
+*.mobileprovision
+*.cer
+server/data/
+server/.venv/
+__pycache__/
+.pytest_cache/
+*.db
+*.db-wal
+*.db-shm

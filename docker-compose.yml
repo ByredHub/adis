@@ -1,0 +1,41 @@
+# Production-like stack: PostgreSQL + Adis AI Backend (API + delivery worker).
+#   cp server/.env.example server/.env     # LLM key, ADIS_PUBLIC_URL, VAPID keys
+#   echo POSTGRES_PASSWORD=change-me > .env
+#   docker compose up -d --build
+# Put an HTTPS reverse proxy (Caddy, nginx, a cloud load balancer) in front of port 8000:
+# phones require HTTPS for install, microphone and push notifications.
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: adis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env next to this file}
+      POSTGRES_DB: adis
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U adis"]
+      interval: 5s
+      retries: 10
+
+  adis:
+    build: ./server
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - server/.env
+    environment:
+      ADIS_DATABASE_URL: postgresql+psycopg://adis:${POSTGRES_PASSWORD}@db:5432/adis
+      # ADIS_SERVE_APP: "true"         # serve the PWA too (uncomment the ./app volume below)
+    volumes:
+      - adisdata:/srv/server/data      # generated VAPID keys live here; keep them stable
+      # - ./app:/srv/app:ro
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:
+  adisdata:
