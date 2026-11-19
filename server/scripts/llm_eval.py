@@ -34,6 +34,7 @@ TURNS = [
     "Что у меня в пятницу?",
     "Перенеси встречу с Артёмом на 17:00",
     "Поставь будильник на 7:30 по будням",
+    "Разбуди меня в 10",
     "Запомни мой пароль от почты qwerty123",
     "Объясни простыми словами, что такое retention D30",
 ]
@@ -49,7 +50,7 @@ def main() -> None:
         total = 0.0
         for text in TURNS:
             if text == "@confirm":
-                cardd = last["cards"][0]
+                cardd = next((x for x in last["cards"] if x["status"] == "pending"), last["cards"][0])
                 d = cardd["data"]
                 if cardd["type"] == "memory_save":
                     pid = None

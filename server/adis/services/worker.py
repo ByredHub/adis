@@ -12,11 +12,12 @@ from datetime import timedelta
 from sqlalchemy import and_, or_, select
 
 from ..config import settings
-from ..core.timeutil import fmt_date_time, fmt_time, get_tz, utcnow
+from ..core.timeutil import fmt_date_time, fmt_time, get_tz, local, to_utc, utcnow
 from ..db import SessionLocal
-from ..models import Alarm, Event, Task, User
+from ..models import Alarm, Debt, Event, Task, User
 from . import alarms as alarm_svc
 from . import push
+from .finance import dative, money
 
 log = logging.getLogger("adis.worker")
 STALE = timedelta(hours=6)  # don't send reminders that are older than this (server was down)
@@ -56,6 +57,21 @@ def tick(now=None) -> dict:
             push.send_to_user(db, e.user_id, {"title": f"Скоро: {e.title}", "body": f"{when}{' · ' + e.location if e.location else ''}",
                                               "route": "#/calendar", "tag": f"event-{e.id}"})
             sent["events"] += 1
+
+        # Debts: remind in the morning of the due day (09:00 user time) or right away if the due time already passed
+        for d in db.scalars(_locked(select(Debt).where(Debt.status == "open", Debt.remind.is_(True), Debt.due_at.is_not(None),
+                                                       Debt.notified_at.is_(None), Debt.due_at <= now + timedelta(days=1))).limit(200)):
+            z = tz(d.user_id)
+            due_local = local(d.due_at, z)
+            remind_at = min(d.due_at, to_utc(due_local.replace(hour=9, minute=0, second=0, microsecond=0)))
+            if remind_at > now:
+                continue
+            d.notified_at = now
+            left = money(d.amount - (d.paid or 0), d.currency)
+            body = f"{d.counterparty} должен вернуть {left}" if d.direction == "lent" else f"Вернуть {dative(d.counterparty)} {left}"
+            push.send_to_user(db, d.user_id, {"title": "Срок долга сегодня" if d.due_at > now else "Срок долга прошёл", "body": body,
+                                              "route": "#/finance?tab=debts", "tag": f"debt-{d.id}"})
+            sent["debts"] = sent.get("debts", 0) + 1
 
         q = select(Alarm).where(Alarm.enabled.is_(True), or_(Alarm.next_at <= now, and_(Alarm.snooze_until.is_not(None), Alarm.snooze_until <= now)))
         for a in db.scalars(_locked(q).limit(200)):

@@ -43,6 +43,11 @@ class ForgotIn(In):
     email: str = ""
 
 
+class ResetPasswordIn(In):
+    token: str = ""
+    password: str = ""
+
+
 class ChangePasswordIn(In):
     current: str = ""
     next: str = ""
@@ -224,3 +229,51 @@ class AgentIn(In):
     description: str | None = Field(None, max_length=2_000)
     instructions: str | None = Field(None, max_length=10_000)
     tools: list[str] | None = None
+
+
+# ---------- finance ----------
+class TransactionIn(In):
+    kind: Literal["expense", "income"] = "expense"
+    amount: float = Field(..., gt=0, le=1e12)
+    currency: str = Field("RUB", min_length=3, max_length=3)
+    category: str | None = Field(None, max_length=60)
+    note: str = Field("", max_length=500)
+    occurred_at: datetime | None = None
+    person_id: str | None = None
+    source: dict | None = None
+
+
+class TransactionPatch(In):
+    kind: Literal["expense", "income"] | None = None
+    amount: float | None = Field(None, gt=0, le=1e12)
+    currency: str | None = Field(None, min_length=3, max_length=3)
+    category: str | None = Field(None, max_length=60)
+    note: str | None = Field(None, max_length=500)
+    occurred_at: datetime | None = None
+    person_id: str | None = None
+
+
+class DebtIn(In):
+    direction: Literal["lent", "borrowed"]
+    amount: float = Field(..., gt=0, le=1e12)
+    currency: str = Field("RUB", min_length=3, max_length=3)
+    person_id: str | None = None
+    counterparty: str = Field("", max_length=160)
+    note: str = Field("", max_length=500)
+    occurred_at: datetime | None = None
+    due_at: datetime | None = None
+    remind: bool = True
+
+
+class DebtPatch(In):
+    amount: float | None = Field(None, gt=0, le=1e12)
+    person_id: str | None = None
+    counterparty: str | None = Field(None, max_length=160)
+    note: str | None = Field(None, max_length=500)
+    due_at: datetime | None = None
+    remind: bool | None = None
+    status: Literal["open", "closed"] | None = None
+
+
+class RepayIn(In):
+    amount: float | None = Field(None, gt=0, le=1e12)  # empty = the whole remainder

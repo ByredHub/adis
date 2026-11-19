@@ -76,6 +76,19 @@ class Settings:
         # Optional sampling/reasoning knobs (GPT-5 family accepts only the default temperature; use reasoning effort instead)
         self.llm_temperature = float(_env("ADIS_LLM_TEMPERATURE")) if _env("ADIS_LLM_TEMPERATURE") else None
         self.llm_reasoning = _env("ADIS_LLM_REASONING")  # none | minimal | low | medium | high
+        # Outgoing email (password reset). Off when ADIS_SMTP_HOST is empty.
+        self.smtp_host = _env("ADIS_SMTP_HOST")
+        self.smtp_port = int(_env("ADIS_SMTP_PORT", "587"))
+        self.smtp_user = _env("ADIS_SMTP_USER")
+        self.smtp_password = _env("ADIS_SMTP_PASSWORD")
+        self.smtp_from = _env("ADIS_SMTP_FROM") or self.smtp_user
+        self.smtp_security = _env("ADIS_SMTP_SECURITY", "starttls").lower()  # starttls | ssl | none
+        # Signs password-reset links. Generated once into server/data/secret.key when not set.
+        self.secret_key_override = _env("ADIS_SECRET_KEY")
+
+    @property
+    def smtp_enabled(self) -> bool:
+        return bool(self.smtp_host and self.smtp_from)
 
     @property
     def llm_enabled(self) -> bool:

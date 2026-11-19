@@ -522,6 +522,53 @@ def keywords(text: str) -> list[str]:
     return [w for w in words(text) if len(w) > 2 and w not in STOP]
 
 
+# ---------- finance ----------
+_HAS_AMOUNT = re.compile(r"\d|тысяч|сотн|сотк|пятихатк", re.I)
+_DEBT_WORDS = r"в долг|одолжил|одолжила|занял|заняла|задолжал|задолжала|должен|должна|должны|долг"
+_REPAID = r"вернул|вернула|вернули|отдал[аи]?\s+(?:\S+\s+)?(?:долг|деньги)|погасил|погасила|рассчитал(ся|ась)|закрыл[аи]? долг"
+_EXPENSE = r"потратил|потратила|потрачено|заплатил|заплатила|оплатил|оплатила|купил|купила|расход|трата|ушло на|списали|отдал[аи]? за"
+_INCOME = r"получил|получила|заработал|заработала|пришл[оа] (?:на карту|деньги|зарплата|\d)|поступил[оа]|зарплат[аау]|доход|выручк|начислили|перевели мне|мне перевели|премия|премию"
+
+
+def finance_intent(t: str, low: str, is_q: bool) -> str | None:
+    if re.match(r"^(напомни|не дай мне забыть|нужно не забыть)", low):
+        return None
+    money_words = r"трат|потратил|расход|доход|заработал|получил|баланс|бюджет|финанс|деньг|долг|должен|должна|должны|задолж"
+    if (is_q or re.match(r"^(покажи|мои|сколько|кому|кто)\b", low)) and re.search(money_words, low) and not re.search(r"\d{3,}", low):
+        return "finance_query"
+    if re.search(_REPAID, low) and (re.search(r"долг|деньги", low) or _HAS_AMOUNT.search(low)) and not is_q:
+        return "debt_repaid"
+    if re.search(_DEBT_WORDS, low) and _HAS_AMOUNT.search(low) and not is_q:
+        return "debt"
+    if re.search(r"(^|\s)дал[аи]?\s+\S+\s+[\d ]+\S*\s+до\s", low):
+        return "debt"
+    if re.search(_EXPENSE, low) and _HAS_AMOUNT.search(low) and not is_q:
+        return "expense"
+    if re.search(_INCOME, low) and _HAS_AMOUNT.search(low) and not is_q:
+        return "income"
+    return None
+
+
+def debt_direction(text: str) -> str:
+    """lent = мне должны, borrowed = я должен."""
+    low = text.lower()
+    if re.search(r"(занял|заняла|взял|взяла|одолжил|одолжила|перехватил)[а-я]*\s+(?:в долг\s+)?(?:\S+\s+)?(у|от)\s", low):
+        return "borrowed"
+    if re.search(r"(^|\s)я\s+(?:\S+\s+)?(должен|должна|задолжал|задолжала)", low) or re.match(r"^(должен|должна|задолжал)", low):
+        return "borrowed"
+    return "lent"
+
+
+def repaid_direction(text: str) -> str | None:
+    """«Артём вернул» / «мне вернули» -> lent (мне вернули); «я вернул Дмитрию» / «отдал маме долг» -> borrowed."""
+    low = text.lower().strip()
+    if re.match(r"^(я\s+)?(вернул|вернула|отдал|отдала|погасил|погасила|рассчитался|рассчиталась|закрыл|закрыла)\b", low):
+        return "borrowed"
+    if re.search(r"мне\s+(вернул|вернула|вернули|отдал|отдала|отдали)", low) or re.match(r"^[а-яё]+\s+(вернул|вернула|отдал|отдала|рассчитал)", low):
+        return "lent"
+    return None
+
+
 # ---------- intents ----------
 def intent(text: str) -> str:
     t = text.strip()
@@ -551,6 +598,9 @@ def intent(text: str) -> str:
         if is_q or has(r"(мои|какие|покажи|список)\s+(у меня\s+)?будильник"):
             return "alarm_list"
         return "alarm"
+    fin = finance_intent(t, low, is_q)
+    if fin:
+        return fin
     if re.match(rf"^(adis,?\s*)?(пожалуйста,?\s*)?(отмени|удали|убери)\s+(мою\s+|мой\s+|моё\s+|сегодняшн\S*\s+|завтрашн\S*\s+)?({EVENT_WORDS})", low):
         return "event_cancel"
     if re.match(rf"^(adis,?\s*)?(пожалуйста,?\s*)?(перенеси|сдвинь|передвинь|перенести)\s+(мою\s+|мой\s+|моё\s+|сегодняшн\S*\s+|завтрашн\S*\s+)?({EVENT_WORDS})", low):

@@ -87,6 +87,32 @@ def seed_demo(db, user_id: str, tz) -> None:
         Event(id=uid("e"), user_id=user_id, title="Созвон с командой", start_at=at(0, 12), end_at=at(0, 12, 30), location="Онлайн", remind_minutes=10),
         Event(id=uid("e"), user_id=user_id, title="Дизайн-ревью с Марией", start_at=at(4, 10), end_at=at(4, 11), remind_minutes=30),
     ])
+    from decimal import Decimal
+
+    from ..models import Debt, Transaction
+
+    def tx(kind, amount, category, note, days, h=13):
+        return Transaction(id=uid("tx"), user_id=user_id, kind=kind, amount=Decimal(amount), currency="RUB", category=category, note=note,
+                           occurred_at=at(days, h))
+
+    db.add_all([
+        tx("income", 180000, "Зарплата", "Зарплата за месяц", -10, 10),
+        tx("income", 25000, "Подработка", "Консультация по дизайну", -4, 18),
+        tx("expense", 45000, "Жильё", "Аренда квартиры", -9, 9),
+        tx("expense", 3240, "Продукты", "Продукты во ВкусВилле", -2, 19),
+        tx("expense", 1890, "Продукты", "Продукты в Пятёрочке", -6, 20),
+        tx("expense", 650, "Кафе и рестораны", "Кофе и завтрак", -1, 9),
+        tx("expense", 2400, "Кафе и рестораны", "Ужин с Марией", -3, 20),
+        tx("expense", 890, "Такси", "Такси до офиса", -1, 8),
+        tx("expense", 799, "Подписки", "ChatGPT", -7, 12),
+        tx("expense", 650, "Связь и интернет", "Мобильная связь", -8, 12),
+    ])
+    db.add_all([
+        Debt(id=uid("db"), user_id=user_id, direction="lent", person_id=igor.id, counterparty=igor.name, amount=Decimal(5000), paid=Decimal(2000),
+             currency="RUB", note="На ремонт ноутбука", occurred_at=at(-14, 15), due_at=at(-1, 12), payments=[{"date": iso(at(-5, 18)), "amount": 2000.0}]),
+        Debt(id=uid("db"), user_id=user_id, direction="borrowed", counterparty="Брат", amount=Decimal(15000), paid=Decimal(0), currency="RUB",
+             note="До зарплаты", occurred_at=at(-6, 19), due_at=at(9, 12), payments=[]),
+    ])
     db.add(Document(id=uid("doc"), user_id=user_id, title="Заметки к питчу", created_at=at(-1, 20), updated_at=at(-1, 20), content=(
         "# Питч Adis\n\n**Проблема:** информация о людях, планах и договорённостях теряется в десятках приложений.\n\n"
         "**Решение:** Adis — персональный ИИ-помощник с долговременной памятью.\n\n- Голос и текст\n- Память о людях и событиях\n"

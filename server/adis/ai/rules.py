@@ -9,7 +9,7 @@ import random
 import re
 from datetime import timedelta
 
-from ..core.textutil import esc, plural, same_stem, words
+from ..core.textutil import cap, esc, plural, same_stem, words
 from ..core.timeutil import fmt_date, fmt_date_time, fmt_rel_day, fmt_time, is_same_day, iso, local, parse_iso, to_utc, utcnow
 from ..services.store import MEMORY_TYPES
 from . import nlu
@@ -313,6 +313,9 @@ def respond_sync(ctx: TurnContext) -> dict:
     if intent in ("event_create", "calendar_query", "event_move", "event_cancel", "alarm", "alarm_off", "alarm_list"):
         return calendar_turn(ctx, intent, tool_calls, out)
 
+    if intent in ("expense", "income", "debt", "debt_repaid", "finance_query"):
+        return finance_turn(ctx, intent, tool_calls, out)
+
     if intent == "report":
         tool_calls.append({"name": "memory_search", "args": {"period": "7d"}})
         return out(build_report(s), [card("open", {"route": "#/workspace/reports", "label": "Открыть в «Отчётах»", "icon": "report"})])
@@ -483,6 +486,140 @@ def calendar_turn(ctx: TurnContext, intent: str, tool_calls: list, out):
     if not al["hasTime"]:
         return out("На какое время поставить будильник? Выбери на карточке.", [card("alarm_set", {**data, "hour": 7, "minute": 0}, "pending")])
     return out(f"Поставить будильник на **{al['hour']:02d}:{al['minute']:02d}** ({data['daysLabel'].lower()})?", [card("alarm_set", data, "pending")])
+
+
+_FIN_VERBS = re.compile(r"^\s*(?:я\s+)?(?:потратил[аи]?|потрачено|заплатил[аи]?|оплатил[аи]?|купил[аи]?|расход|трата|получил[аи]?|заработал[аи]?|"
+                        r"пришл[оа]|поступил[оа]|начислили|мне перевели|перевели мне)\s*", re.I)
+
+
+def _fin_note(text: str, span) -> str:
+    rest = (text[:span[0]] + " " + text[span[1]:]) if span else text
+    rest = _FIN_VERBS.sub("", rest.strip())
+    rest = re.sub(r"^\s*(?:на|за)\s+", "", re.sub(r"\s+(?:на|за)\s*$", "", rest.strip()))
+    rest = re.sub(r"\s+(?:на|за)\s+(?=на|за)", " ", rest)
+    rest = re.sub(r"\s*(?:₽|руб(?:л(?:ей|я|ь))?\.?|р\.)\s*", " ", rest)
+    return cap(re.sub(r"\s+", " ", rest).strip(" ,.-—"))[:200]
+
+
+def finance_turn(ctx: TurnContext, intent: str, tool_calls: list, out):
+    from ..services import finance as fin
+
+    s, tz, text = ctx.store, ctx.tz, ctx.text
+    F = fin.Finance(s)
+    open_fin = card("open", {"route": "#/finance", "label": "Открыть «Финансы»", "icon": "chart"})
+
+    if intent in ("expense", "income"):
+        m = fin.parse_money(text)
+        if not m:
+            return out("Сколько? Назови сумму, например: «Потратил 1200 на продукты».")
+        note = _fin_note(text, m["span"])
+        when = utcnow() - (timedelta(days=1) if re.search(r"\bвчера\b", text, re.I) else timedelta(0))
+        person = nlu.find_person_mention(text, s.people())
+        data = {"kind": intent, "amount": float(m["amount"]), "currency": m["currency"], "category": fin.categorize(text, intent),
+                "note": note, "occurredAt": iso(when), "personId": person.id if person else None}
+        tool_calls.append({"name": "finance_add", "args": data})
+        what = "расход" if intent == "expense" else "доход"
+        cat = data["category"]
+        if note and len(note.split()) == 1 and same_stem(note, cat.split()[0]):
+            note = data["note"] = cat
+        label = (note + ("" if same_stem(note.split()[0], cat.split()[0]) else f" ({cat.lower()})")) if note else cat
+        return out(f"Записать {what} **{fin.money(m['amount'], m['currency'])}** — {label}?",
+                   [card("finance_tx", data, "pending")])
+
+    if intent == "debt":
+        m = fin.parse_money(text)
+        direction = nlu.debt_direction(text)
+        person = nlu.find_person_mention(text, s.people())
+        name = person.name if person else fin.extract_counterparty(text)
+        if not m:
+            return out("Какая сумма? Например: «Дал Артёму 5000 до пятницы».")
+        if not name:
+            return out("Кто должен или кому ты должен? Например: «Занял у Дмитрия 10000».")
+        rest = text[:m["span"][0]] + " " + text[m["span"][1]:]
+        when = nlu.parse_when(rest, ctx.now) if re.search(r"(до|к|через|вернуть|отдать)\s", rest, re.I) else {"date": None, "has_day": False}
+        due = when["date"] if when.get("has_day") or (when.get("date") and when.get("has_time")) else None
+        data = {"direction": direction, "amount": float(m["amount"]), "currency": m["currency"], "personId": person.id if person else None,
+                "counterparty": name, "dueAt": iso(due) if due else None, "note": ""}
+        tool_calls.append({"name": "debt_add", "args": data})
+        amount = fin.money(m["amount"], m["currency"])
+        due_txt = f" до {fmt_date(due, tz)}" if due else ""
+        msg = f"Записать: **{name}** должен тебе **{amount}**{due_txt}?" if direction == "lent" else f"Записать: ты должен **{fin.dative(name)}** **{amount}**{due_txt}?"
+        return out(msg + (" Напомню в срок." if due else ""), [card("debt_create", data, "pending")])
+
+    if intent == "debt_repaid":
+        direction = nlu.repaid_direction(text)
+        d = F.find_open_debt(text, direction) or (F.find_open_debt(text) if direction else None)
+        tool_calls.append({"name": "debt_repay", "args": {"text": text}})
+        if not d:
+            return out("Не нашёл открытого долга. Открой «Финансы → Долги», чтобы выбрать вручную.", [open_fin])
+        m = fin.parse_money(text, d.currency)
+        left = d.amount - (d.paid or 0)
+        amount = min(m["amount"], left) if m else left
+        full = amount >= left
+        data = {"debtId": d.id, "amount": float(amount), "full": full, "left": float(left), "currency": d.currency, "counterparty": d.counterparty,
+                "direction": d.direction}
+        who = f"**{d.counterparty}** вернул(а) тебе" if d.direction == "lent" else f"Ты вернул(а) **{fin.dative(d.counterparty)}**"
+        rest = "" if full else f" Останется {fin.money(left - amount, d.currency)}."
+        return out(f"{who} **{fin.money(amount, d.currency)}**{' — долг закрыт' if full else ''}?{rest}", [card("debt_repay", data, "pending")])
+
+    # finance_query
+    low = text.lower()
+    if re.search(r"долг|должен|должна|должны|задолж", low):
+        direction = "lent" if re.search(r"(кто|сколько)\s+(мне\s+)?(\S+\s+)?(мне\s+)?(должен|должна|должны)|мне\s+должн|мои должники", low) else \
+            "borrowed" if re.search(r"кому\s+я|я\s+(\S+\s+)?должен|я\s+(\S+\s+)?должна|мои долги перед", low) else None
+        tool_calls.append({"name": "debt_list", "args": {"direction": direction}})
+        debts = F.debts(status="open", direction=direction)
+        person = nlu.find_person_mention(text, s.people())
+        if person:
+            debts = [d for d in debts if d.person_id == person.id] or [d for d in debts if same_stem(d.counterparty.split(" ")[0], person.name.split(" ")[0])]
+        if not debts:
+            empty = {"lent": "Тебе никто не должен.", "borrowed": "Ты никому не должен."}.get(direction, "Открытых долгов нет.")
+            return out(empty, [open_fin])
+        lines = []
+        for title, dr in (("**Тебе должны:**", "lent"), ("**Ты должен:**", "borrowed")):
+            items = [d for d in debts if d.direction == dr]
+            if items:
+                lines.append(title)
+                for d in items:
+                    left = d.amount - (d.paid or 0)
+                    due = f", до {fmt_date(d.due_at, tz)}" + (" — **просрочено**" if d.due_at < utcnow() else "") if d.due_at else ""
+                    lines.append(f"- {d.counterparty} — {fin.money(left, d.currency)}{due}")
+                totals = {}
+                for d in items:
+                    totals[d.currency] = totals.get(d.currency, 0) + (d.amount - (d.paid or 0))
+                lines.append("  Итого: " + ", ".join(fin.money(v, c) for c, v in totals.items()) + "\n")
+        return out("\n".join(lines).strip(), [open_fin])
+
+    start, end, label = F.period(text)
+    kind = "income" if re.search(r"доход|заработал|получил|поступлен", low) else "expense"
+    both = bool(re.search(r"баланс|бюджет|итог|финанс", low))
+    cat = fin.categorize(text, "expense") if kind == "expense" else "Другое"
+    tool_calls.append({"name": "finance_report", "args": {"from": iso(to_utc(start)), "to": iso(to_utc(end)), "category": cat}})
+    sm = F.summary(start, end)
+    if cat != "Другое" and not both:
+        txs = F.transactions(to_utc(start), to_utc(end), "expense", cat)
+        if not txs:
+            return out(f"{label}: на «{cat.lower()}» трат нет.", [open_fin])
+        totals = {}
+        for t in txs:
+            totals[t.currency] = totals.get(t.currency, 0) + t.amount
+        return out(f"{label} на «{cat.lower()}»: **{', '.join(fin.money(v, c) for c, v in totals.items())}** ({len(txs)} {plural(len(txs), 'операция', 'операции', 'операций')}).", [open_fin])
+    if not sm["totals"]:
+        return out(f"{label}: операций пока нет. Скажи, например: «Потратил 1200 на продукты».", [open_fin])
+    lines = [f"**{label}:**"]
+    for tt in sm["totals"]:
+        c = tt["currency"]
+        if both or kind == "income":
+            lines.append(f"- Доходы: {fin.money(tt['income'], c)}")
+        if both or kind == "expense":
+            lines.append(f"- Расходы: {fin.money(tt['expense'], c)}")
+        if both:
+            lines.append(f"- Баланс: {fin.money(tt['balance'], c)}")
+    if kind == "expense" or both:
+        top = sm["byCategory"][:5]
+        if top:
+            lines.append("\n**Больше всего:**\n" + "\n".join(f"- {x['category']} — {fin.money(x['amount'], x['currency'])}" for x in top))
+    return out("\n".join(lines), [open_fin])
 
 
 def local_date(dt, tz) -> str:

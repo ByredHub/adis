@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -189,6 +190,46 @@ class PushSubscription(Base):
     failures: Mapped[int] = mapped_column(Integer, default=0)
     last_ok_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = _ts()
+
+
+class Transaction(Base):
+    """Income or expense. Amounts are exact decimals in the record's currency."""
+    __tablename__ = "transactions"
+    id: Mapped[str] = _id()
+    user_id: Mapped[str] = _owner()
+    kind: Mapped[str] = mapped_column(String(10), index=True)  # expense | income
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="RUB")
+    category: Mapped[str] = mapped_column(String(60), default="Другое")
+    note: Mapped[str] = mapped_column(String(500), default="")
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    person_id: Mapped[str | None] = mapped_column(String(40), ForeignKey("people.id", ondelete="SET NULL"), nullable=True)
+    source: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = _ts()
+
+
+class Debt(Base):
+    """lent = someone owes me; borrowed = I owe someone. Repayments are kept in `payments`."""
+    __tablename__ = "debts"
+    id: Mapped[str] = _id()
+    user_id: Mapped[str] = _owner()
+    direction: Mapped[str] = mapped_column(String(10), index=True)  # lent | borrowed
+    person_id: Mapped[str | None] = mapped_column(String(40), ForeignKey("people.id", ondelete="SET NULL"), nullable=True)
+    counterparty: Mapped[str] = mapped_column(String(160), default="")
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    paid: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
+    currency: Mapped[str] = mapped_column(String(3), default="RUB")
+    note: Mapped[str] = mapped_column(String(500), default="")
+    occurred_at: Mapped[datetime] = _ts()
+    due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    remind: Mapped[bool] = mapped_column(Boolean, default=True)
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(10), default="open", index=True)  # open | closed
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    payments: Mapped[list] = mapped_column(JSONType, default=list)
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = _ts()
 
 
 class Document(Base):

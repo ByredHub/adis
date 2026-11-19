@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from .core.timeutil import iso, utcnow
-from .models import Agent, AgentRun, Alarm, Conversation, Document, Event, Memory, Message, Person, Task, User
+from .models import Agent, AgentRun, Alarm, Debt, Transaction, Conversation, Document, Event, Memory, Message, Person, Task, User
 
 
 def user_out(u: User) -> dict:
@@ -87,3 +87,16 @@ def alarm_out(a: Alarm) -> dict:
             "daysLabel": describe_days(a.days), "label": a.label, "enabled": a.enabled, "timezone": a.timezone,
             "nextAt": iso(due_at(a)), "snoozeUntil": iso(a.snooze_until), "ringAt": iso(a.ring_at), "ringing": ringing(a),
             "createdAt": iso(a.created_at), "updatedAt": iso(a.updated_at)}
+
+def tx_out(t: Transaction) -> dict:
+    return {"id": t.id, "kind": t.kind, "amount": float(t.amount), "currency": t.currency, "category": t.category, "note": t.note,
+            "occurredAt": iso(t.occurred_at), "personId": t.person_id, "createdAt": iso(t.created_at), "updatedAt": iso(t.updated_at)}
+
+
+def debt_out(d: Debt) -> dict:
+    left = d.amount - (d.paid or 0)
+    overdue = d.status == "open" and d.due_at is not None and d.due_at < utcnow()
+    return {"id": d.id, "direction": d.direction, "personId": d.person_id, "counterparty": d.counterparty, "amount": float(d.amount),
+            "paid": float(d.paid or 0), "left": float(left), "currency": d.currency, "note": d.note, "occurredAt": iso(d.occurred_at),
+            "dueAt": iso(d.due_at), "remind": d.remind, "status": d.status, "overdue": overdue, "closedAt": iso(d.closed_at),
+            "payments": d.payments or [], "createdAt": iso(d.created_at), "updatedAt": iso(d.updated_at)}

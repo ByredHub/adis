@@ -60,12 +60,74 @@ def memory(s: Store) -> dict:
                       f"**Главные темы:** {', '.join(top) if top else '—'}"}
 
 
-def generic(agent: Agent, s: Store) -> dict:
+def generic(agent: Agent, s: Store, note: str = "") -> dict:
+    """Answer for a custom agent when no language model is available."""
     active = sum(1 for t in s.tasks() if not t.done)
-    return {"steps": ["Загружаю инструкции агента", *(f"Вызываю инструмент {x}" for x in agent.tools or []), "Формирую результат"],
+    return {"steps": ["Загружаю инструкции агента", "Формирую результат"],
             "result": f"## {agent.name}\n\n**Инструкция:** {agent.instructions or '—'}\n\nДоступно данных: {len(s.memories())} записей памяти, "
-                      f"{active} активных задач, {len(s.people())} людей.\n\n_Пользовательские агенты пока не выполняются языковой моделью: "
-                      "это следующий этап развития AI Backend._"}
+                      f"{active} активных задач, {len(s.people())} людей.\n\n_{note or 'Языковая модель не подключена: пользовательский агент не может выполнить инструкцию.'}_"}
+
+
+# Agent permissions (as chosen in the app) -> read-only LLM tools. Agents never write: their result is a report, not a confirmable card.
+AGENT_TOOL_MAP = {
+    "memory_search": {"memory_search"},
+    "memory_save": {"memory_search"},
+    "entity_lookup": {"entity_lookup"},
+    "task_create": {"task_list", "event_list"},
+    "task_update": {"task_list", "event_list"},
+    "notification_schedule": {"task_list", "event_list"},
+    "proactive_suggestion": {"task_list", "event_list", "memory_search"},
+    "finance": {"finance_report", "debt_list"},
+}
+
+
+def agent_tools(agent: Agent) -> set[str]:
+    out: set[str] = set()
+    for t in agent.tools or []:
+        out |= AGENT_TOOL_MAP.get(t, set())
+    return out
+
+
+def agent_prompt(agent: Agent, s: Store) -> str:
+    from datetime import datetime
+
+    now = datetime.now(s.tz)
+    offset = now.strftime("%z")
+    return (
+        f"Ты — AI-агент «{agent.name}» внутри персонального помощника Adis. Пользователь: {s.user.name}.\n"
+        f"Сейчас {now.strftime('%Y-%m-%d %H:%M')}, часовой пояс {s.tz.key} (UTC{offset[:3]}:{offset[3:]}). Даты в инструментах — ISO 8601 с этим смещением.\n"
+        + (f"Назначение агента: {agent.description}\n" if agent.description else "")
+        + "\nВыполни инструкцию пользователя по его данным. Сначала собери факты доступными инструментами, не выдумывай данные. "
+        "Ты работаешь только на чтение: ничего не создаёшь и не меняешь, а даёшь отчёт и конкретные рекомендации. "
+        "Если данных не хватает — так и скажи и предложи, что пользователю стоит добавить.\n"
+        "Формат: Markdown, начни с заголовка «## …», затем коротко и по делу, списками. На языке пользователя. "
+        "Это разовый отчёт, диалога после него не будет: не задавай вопросов и не предлагай «если хочешь, могу…»."
+    )
+
+
+async def run_custom(agent: Agent, s: Store) -> dict:
+    from ..ai.base import EngineError, TOOL_LABELS, TurnContext
+    from ..ai.llm import LLMEngine
+    from ..config import settings
+
+    if not settings.llm_enabled:
+        return generic(agent, s)
+    ctx = TurnContext(store=s, text=agent.instructions or agent.description or f"Выполни задачу агента «{agent.name}».",
+                      streaming=False, source="agent", system_override=agent_prompt(agent, s), allowed_tools=agent_tools(agent))
+    final: dict = {}
+    try:
+        async for evt in LLMEngine().respond(ctx):
+            if evt["type"] == "final":
+                final = evt
+    except EngineError as e:
+        return generic(agent, s, f"{e} Агент выполнится, когда модель снова будет доступна.")
+    steps = ["Читаю инструкцию агента"]
+    for call in final.get("toolCalls") or []:
+        label = TOOL_LABELS.get(call["name"], f"Вызываю {call['name']}…").rstrip("…")
+        if label not in steps:
+            steps.append(label)
+    steps.append("Формирую результат")
+    return {"steps": steps, "result": final.get("content") or "Готово."}
 
 
 RUNNERS = {"planner": planner, "network": network, "memory": memory,
@@ -126,11 +188,11 @@ def runs(aid: str, ctx: Ctx = Depends(current)):
 
 
 @router.post("/agents/{aid}/runs")
-def run(aid: str, ctx: Ctx = Depends(current)):
+async def run(aid: str, ctx: Ctx = Depends(current)):
     a = _own(ctx, aid)
     s = Store(ctx.db, ctx.user, ctx.tz)
     started = utcnow()
-    res = RUNNERS[a.builtin](s) if a.builtin in RUNNERS else generic(a, s)
+    res = RUNNERS[a.builtin](s) if a.builtin in RUNNERS else await run_custom(a, s)
     r = AgentRun(id=uid("run"), agent_id=a.id, user_id=ctx.user.id, status="completed", steps=res["steps"], result=res["result"],
                  started_at=started, finished_at=utcnow())
     ctx.db.add(r)

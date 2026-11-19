@@ -13,7 +13,8 @@ Base URL: `https://api.adis.app/v1` (настраивается в прилож�
 | POST | /auth/login | `{email,password}` → то же |
 | POST | /auth/refresh | `{refreshToken}` → то же (refresh одноразовый) |
 | POST | /auth/logout | `{refreshToken}` |
-| POST | /auth/password/forgot* | `{email}` |
+| POST | /auth/password/forgot* | `{email}` → `{ok}`; письмо со ссылкой `#/reset?token=…` (1 час, одноразовая). Без SMTP — `{ok, demoNote}` |
+| POST | /auth/password/reset* | `{token,password}` → `{ok}`; все сессии пользователя завершаются |
 | POST | /auth/password/change* | `{current,next}` |
 | GET | /users/me | `User {id,name,email,assistantName,avatar,createdAt}` |
 | PATCH | /users/me* | `{name?,assistantName?,avatar?}` |
@@ -95,3 +96,17 @@ Payload, который получает service worker: `{title, body, route, t
 `POST /voice/transcribe?lang=ru` — тело запроса: сама запись (`Content-Type: audio/webm | audio/mp4 | audio/ogg | audio/mpeg | audio/wav`, до 15 МБ) → `{text}`. Имена людей пользователя передаются модели как подсказка; числа, время и телефоны распознаются цифрами.
 `POST /voice/speak {text, voice?, speed?}` → `audio/mpeg`. Markdown и код из текста убираются, до 1500 символов.
 Ограничение: 120 голосовых запросов на пользователя за 10 минут (429).
+
+## Finance*
+| Метод | Путь | Описание |
+|---|---|---|
+| GET | /finance/transactions?from=&to=&kind=&category= | операции, новые сверху |
+| POST | /finance/transactions | `{kind:'expense'|'income', amount, currency='RUB', category?, note, occurredAt?, personId?}` (категория определяется по тексту, если не задана) |
+| PATCH / DELETE | /finance/transactions/{id} | |
+| GET | /finance/debts?status=open|closed&direction=lent|borrowed | `Debt {id, direction, counterparty, personId, amount, paid, left, currency, note, dueAt, overdue, status, payments[]}` |
+| POST | /finance/debts | `{direction, amount, currency, personId? | counterparty, dueAt?, note, remind=true}`; `lent` — мне должны, `borrowed` — я должен |
+| POST | /finance/debts/{id}/repay | `{amount?}`: частичный возврат или весь остаток; при полном погашении статус меняется на `closed` |
+| PATCH / DELETE | /finance/debts/{id} | |
+| GET | /finance/summary?month=YYYY-MM | `{totals:[{currency, income, expense, balance}], byCategory:[…], debts:[{currency, owedToMe, iOwe}], openDebts, overdueDebts}` в часовом поясе пользователя |
+
+Карточки чата: `finance_tx`, `debt_create`, `debt_repay` (подтверждаются запросами выше). Если у долга есть срок, в тот же день в 09:00 приходит push с напоминанием, а просроченный долг появляется в предложениях на главной.

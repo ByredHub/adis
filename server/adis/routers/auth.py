@@ -11,13 +11,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..core.security import hash_password, login_limiter, new_token, token_hash, verify_password
+from ..core.security import forgot_limiter, hash_password, login_limiter, new_token, token_hash, verify_password
 from ..core.textutil import uid
 from ..core.timeutil import iso, utcnow
 from ..db import get_db
 from ..deps import Ctx, current, fail, user_tz
 from ..models import AuthSession, Conversation, Document, Message, User
-from ..schemas import ChangePasswordIn, ForgotIn, LoginIn, LogoutIn, RefreshIn, RegisterIn, UserPatch
+from ..schemas import ChangePasswordIn, ForgotIn, LoginIn, LogoutIn, RefreshIn, RegisterIn, ResetPasswordIn, UserPatch
 from ..serialize import (conv_summary, document_out, event_out, memory_out, message_out, person_out, task_out,
                          user_out)
 from ..services.seed import add_builtin_agents, seed_demo
@@ -122,10 +122,36 @@ def logout(body: LogoutIn, request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/auth/password/forgot")
-def forgot(body: ForgotIn):
-    norm_email(body.email)
-    # Always the same answer so the endpoint can't be used to check which emails are registered
-    return {"ok": True, "demoNote": "Отправка писем на сервере пока не настроена: восстановление пароля по email появится после подключения почтового сервиса."}
+def forgot(body: ForgotIn, request: Request, db: Session = Depends(get_db)):
+    from ..services import mail
+
+    email = norm_email(body.email)
+    if not settings.smtp_enabled:
+        return {"ok": True, "demoNote": "Отправка писем на сервере пока не настроена: восстановление пароля по email появится после подключения почтового сервиса."}
+    key = f"forgot|{email}"
+    user = db.scalar(select(User).where(User.email == email))
+    # Same answer whether or not the account exists, so the endpoint can't be used to check which emails are registered
+    if user and not user.demo and not forgot_limiter.blocked(key):
+        forgot_limiter.hit(key)
+        base = settings.public_url or str(request.base_url).rstrip("/")
+        mail.send_reset(user.email, user.name, f"{base}/#/reset?token={mail.reset_token(user.id, user.pass_hash)}")
+    return {"ok": True}
+
+
+@router.post("/auth/password/reset")
+def reset_password(body: ResetPasswordIn, db: Session = Depends(get_db)):
+    from ..services import mail
+
+    data = mail.read_reset_token(body.token)
+    user = db.get(User, data["u"]) if data else None
+    if not user or not mail.fingerprint_matches(data, user.pass_hash):
+        fail(400, "Ссылка недействительна или устарела. Запросите восстановление пароля ещё раз.")
+    if len(body.password or "") < 8:
+        fail(422, "Пароль должен быть не короче 8 символов")
+    user.pass_hash = hash_password(body.password)
+    db.execute(delete(AuthSession).where(AuthSession.user_id == user.id))  # sign out everywhere
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/auth/password/change")
@@ -182,8 +208,15 @@ def export(ctx: Ctx = Depends(current)):
         convs.append({**conv_summary(c, msgs[-1] if msgs else None, len(msgs)), "messages": [message_out(m) for m in msgs]})
     from ..routers.agents import agents_export
 
+    def finance_export(store):
+        from ..serialize import debt_out, tx_out
+        from ..services.finance import Finance
+
+        f = Finance(store)
+        return {"transactions": [tx_out(t) for t in f.transactions()], "debts": [debt_out(d) for d in f.debts()]}
+
     return {"exportedAt": iso(utcnow()), "user": user_out(ctx.user), "data": {
         "conversations": convs, "memories": [memory_out(m) for m in s.memories()], "people": [person_out(p) for p in s.people()],
         "tasks": [task_out(t) for t in s.tasks()], "events": [event_out(e) for e in s.events()],
         "documents": [document_out(d) for d in ctx.db.scalars(select(Document).where(Document.user_id == ctx.user.id))],
-        **agents_export(ctx)}}
+        **agents_export(ctx), **finance_export(s)}}

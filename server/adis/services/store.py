@@ -369,6 +369,13 @@ class Store:
                         "text": f"{stale.profession or 'Знакомый'}{', ' + stale.organization if stale.organization else ''}. Напомнить написать на этой неделе?",
                         "action": {"type": "create_task", "title": f"Написать {stale.name.split(' ')[0]}", "personId": stale.id},
                         "actionLabel": "Напомнить", "icon": "bell"})
+        from .finance import Finance, dative, money
+
+        for d in [d for d in Finance(self).debts(status="open") if d.due_at and d.due_at < now][:2]:
+            left = money(d.amount - (d.paid or 0), d.currency)
+            res.append({"id": f"sg_debt_{d.id}", "kind": "debt", "title": "Срок долга прошёл",
+                        "text": f"{d.counterparty} должен вернуть {left}." if d.direction == "lent" else f"Ты собирался вернуть {dative(d.counterparty)} {left}.",
+                        "action": {"type": "open", "route": "#/finance?tab=debts"}, "actionLabel": "Открыть долги", "icon": "chart"})
         unconfirmed = sum(1 for m in memories if not m.confirmed)
         if unconfirmed:
             res.append({"id": f"sg_confirm_{unconfirmed}", "kind": "memory", "title": "Проверь, что я запомнил",
@@ -392,5 +399,8 @@ class Store:
 
         from ..models import PushSubscription
 
-        for model in (AgentRun, Agent, Message, Conversation, Memory, Task, Event, Alarm, Document, SuggestionState, PushSubscription, Person, AuthSession):
+        from ..models import Debt, Transaction
+
+        for model in (AgentRun, Agent, Message, Conversation, Memory, Task, Event, Alarm, Transaction, Debt, Document, SuggestionState, PushSubscription,
+                      Person, AuthSession):
             self.db.execute(delete(model).where(model.user_id == self.uid))

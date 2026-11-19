@@ -17,7 +17,7 @@ from .ai.gateway import describe
 from .config import settings
 from .db import init_db
 from .services import push, worker
-from .routers import agents, auth, chat, data, schedule, voice
+from .routers import agents, auth, chat, data, finance, schedule, voice
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("adis")
@@ -65,7 +65,7 @@ def health():
     return {"status": "ok", "version": __version__, **describe(), "voice": settings.voice_enabled}
 
 
-for r in (auth.router, chat.router, data.router, agents.router, schedule.router, voice.router):
+for r in (auth.router, chat.router, data.router, agents.router, schedule.router, voice.router, finance.router):
     app.include_router(r, prefix="/v1")
 
 if settings.serve_app and settings.app_dir.exists():

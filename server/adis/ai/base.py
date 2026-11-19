@@ -32,6 +32,9 @@ class TurnContext:
     conversation_id: str | None = None
     source: str = "text"
     streaming: bool = True
+    # Agent runs: a replacement system prompt and the subset of tools the agent may call (None = all tools)
+    system_override: str | None = None
+    allowed_tools: set[str] | None = None
 
     @property
     def tz(self) -> ZoneInfo:
@@ -51,4 +54,5 @@ def card(type_: str, data: dict, status: str = "info") -> dict:
 
 
 TOOL_LABELS = {"memory_search": "Ищу в памяти…", "entity_lookup": "Ищу людей…", "task_create": "Готовлю напоминание…",
-               "memory_save": "Сохраняю в память…", "task_list": "Смотрю задачи…"}
+               "memory_save": "Сохраняю в память…", "task_list": "Смотрю задачи…",
+               "debt_list": "Смотрю долги…", "finance_report": "Считаю финансы…", "event_list": "Смотрю календарь…"}

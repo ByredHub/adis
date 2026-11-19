@@ -11,6 +11,8 @@ os.environ["ADIS_SERVE_APP"] = "false"
 os.environ["ADIS_WORKER"] = "false"
 os.environ["ADIS_LLM_BASE_URL"] = ""
 os.environ["ADIS_LLM_MODEL"] = ""
+os.environ["ADIS_SMTP_HOST"] = ""
+os.environ["ADIS_SECRET_KEY"] = "test-secret"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest  # noqa: E402

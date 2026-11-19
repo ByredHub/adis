@@ -11,6 +11,7 @@
 !/tools/
 /tools/*
 !/tools/pg.ps1
+!/tools/setup-server.sh
 
 # Never commit secrets, keys or local data
 .env

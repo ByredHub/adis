@@ -61,4 +61,28 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         }
         decisionHandler(.allow)
     }
+
+    // No network / server down: show a retry screen instead of a blank page.
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        handleLoadError(error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        handleLoadError(error)
+    }
+
+    private func handleLoadError(_ error: Error) {
+        let e = error as NSError
+        // Cancelled loads (external links handed to Safari, fast re-navigation) are not failures
+        guard e.domain == NSURLErrorDomain, e.code != NSURLErrorCancelled else { return }
+        let html = """
+        <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+        <style>body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;font:17px -apple-system,sans-serif;
+        background:#0f0f14;color:#eee;text-align:center}div{padding:24px}p{color:#999}
+        a{display:inline-block;margin-top:16px;padding:14px 28px;border-radius:14px;background:#5b5bd6;color:#fff;text-decoration:none}</style>
+        </head><body><div><h2>Нет соединения с Adis</h2><p>Проверьте интернет и попробуйте ещё раз.</p>
+        <a href="\(startURL.absoluteString)">Повторить</a></div></body></html>
+        """
+        webView.loadHTMLString(html, baseURL: nil)
+    }
 }
